@@ -34,13 +34,13 @@ from transformers.modeling_outputs import (
 )
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
-from transformers.models.whisper.configuration_whisper import WhisperConfig
 
 from .q_layers import QuantizeLinear, QuantizeEmbedding, SymQuantizer
+from .configuration_whisper_q import WhisperQConfig
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "WhisperConfig"
+_CONFIG_FOR_DOC = "WhisperQConfig"
 _CHECKPOINT_FOR_DOC = "openai/whisper-tiny"
 
 
@@ -105,9 +105,9 @@ class WhisperPositionalEmbedding(nn.Embedding):
     def forward(self, input_ids, past_key_values_length=0):
         return self.weight[past_key_values_length : past_key_values_length + input_ids.shape[-1]]
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperAttention
-class WhisperAttention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+class WhisperQAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper with quantization."""
 
     def __init__(
         self,
@@ -282,22 +282,40 @@ class WhisperAttention(nn.Module):
 
         return attn_output, attn_weights_reshaped, past_key_value
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperEncoderLayer
-class WhisperEncoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
+
+class WhisperQEncoderLayer(nn.Module):
+    def __init__(self, config: WhisperQConfig):
         super().__init__()
         self.embed_dim = config.d_model
-        self.self_attn = WhisperAttention(
+        self.self_attn = WhisperQAttention(
             embed_dim=self.embed_dim,
             num_heads=config.encoder_attention_heads,
             dropout=config.attention_dropout,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
         )
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
-        self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
-        self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
+        self.fc1 = QuantizeLinear(
+            self.embed_dim,
+            config.encoder_ffn_dim,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
+        )
+        self.fc2 = QuantizeLinear(
+            config.encoder_ffn_dim,
+            self.embed_dim,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
+        )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -351,32 +369,53 @@ class WhisperEncoderLayer(nn.Module):
         return outputs
 
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperDecoderLayer
-class WhisperDecoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
+class WhisperQDecoderLayer(nn.Module):
+    def __init__(self, config: WhisperQConfig):
         super().__init__()
         self.embed_dim = config.d_model
 
-        self.self_attn = WhisperAttention(
+        self.self_attn = WhisperQAttention(
             embed_dim=self.embed_dim,
             num_heads=config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
         )
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
 
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.encoder_attn = WhisperAttention(
+        self.encoder_attn = WhisperQAttention(
             self.embed_dim,
             config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
-        self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
+        self.fc1 = QuantizeLinear(
+            self.embed_dim,
+            config.decoder_ffn_dim,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
+        )
+        self.fc2 = QuantizeLinear(
+            config.decoder_ffn_dim,
+            self.embed_dim,
+            quantize_act=config.quantize_act,
+            input_bits=config.input_bits,
+            weight_bits=config.weight_bits,
+            clip_val=config.clip_val,
+        )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -471,7 +510,7 @@ class WhisperDecoderLayer(nn.Module):
 
 # Copied from transformers.models.whisper.modeling_whisper.WhisperPreTrainedModel
 class WhisperPreTrainedModel(PreTrainedModel):
-    config_class = WhisperConfig
+    config_class = WhisperQConfig
     base_model_prefix = "model"
     main_input_name = "input_features"
     supports_gradient_checkpointing = True
@@ -511,7 +550,7 @@ WHISPER_START_DOCSTRING = r"""
     and behavior.
 
     Parameters:
-        config ([`WhisperConfig`]):
+        config ([`WhisperQConfig`]):
             Model configuration class with all the parameters of the model. Initializing with a config file does not
             load the weights associated with the model, only the configuration. Check out the
             [`~PreTrainedModel.from_pretrained`] method to load the model weights.
@@ -601,11 +640,11 @@ class WhisperEncoder(WhisperPreTrainedModel):
     [`WhisperEncoderLayer`].
 
     Args:
-        config: WhisperConfig
+        config: WhisperQConfig
         embed_tokens (nn.Embedding): output embedding
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: WhisperQConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.encoder_layerdrop
@@ -621,7 +660,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
 
         self.embed_positions = nn.Embedding(self.max_source_positions, embed_dim)
 
-        self.layers = nn.ModuleList([WhisperEncoderLayer(config) for _ in range(config.encoder_layers)])
+        self.layers = nn.ModuleList([WhisperQEncoderLayer(config) for _ in range(config.encoder_layers)])
         self.layer_norm = nn.LayerNorm(config.d_model)
 
         self.gradient_checkpointing = False
@@ -741,10 +780,10 @@ class WhisperDecoder(WhisperPreTrainedModel):
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
 
     Args:
-        config: WhisperConfig
+        config: WhisperQConfig
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: WhisperQConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.decoder_layerdrop
@@ -756,7 +795,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
         self.embed_positions = WhisperPositionalEmbedding(self.max_target_positions, config.d_model)
 
-        self.layers = nn.ModuleList([WhisperDecoderLayer(config) for _ in range(config.decoder_layers)])
+        self.layers = nn.ModuleList([WhisperQDecoderLayer(config) for _ in range(config.decoder_layers)])
 
         self.layer_norm = nn.LayerNorm(config.d_model)
 
@@ -995,7 +1034,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
 class WhisperModel(WhisperPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"proj_out.weight"]
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: WhisperQConfig):
         super().__init__(config)
 
         self.encoder = WhisperEncoder(config)
@@ -1128,7 +1167,7 @@ class WhisperAttentionForConditionalGeneration(WhisperPreTrainedModel):
         r"proj_out.weight",
     ]
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: WhisperQConfig):
         super().__init__(config)
         self.model = WhisperModel(config)
         self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)

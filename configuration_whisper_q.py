@@ -25,9 +25,9 @@ WHISPER_PRETRAINED_CONFIG_ARCHIVE_MAP = {
 }
 
 
-class WhisperConfig(PretrainedConfig):
+class WhisperQConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`WhisperModel`]. It is used to instantiate a
+    This is the configuration class to store the configuration of a [`WhisperQModel`]. It is used to instantiate a
     Whisper model according to the specified arguments, defining the model architecture. Instantiating a configuration
     with the defaults will yield a similar configuration to that of the Whisper
     [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny) architecture.
@@ -113,13 +113,13 @@ class WhisperConfig(PretrainedConfig):
     Example:
 
     ```python
-    >>> from transformers import WhisperConfig, WhisperModel
+    >>> from whisper_q import WhisperQConfig, WhisperQForConditionalGeneration
 
     >>> # Initializing a Whisper tiny style configuration
-    >>> configuration = WhisperConfig()
+    >>> configuration = WhisperQConfig()
 
     >>> # Initializing a model (with random weights) from the tiny style configuration
-    >>> model = WhisperModel(configuration)
+    >>> model = WhisperQForConditionalGeneration(configuration)
 
     >>> # Accessing the model configuration
     >>> configuration = model.config
