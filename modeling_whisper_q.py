@@ -36,6 +36,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
 from transformers.models.whisper.configuration_whisper import WhisperConfig
 
+from .q_layers import QuantizeLinear, QuantizeEmbedding, SymQuantizer
 
 logger = logging.get_logger(__name__)
 
@@ -115,6 +116,10 @@ class WhisperAttention(nn.Module):
         dropout: float = 0.0,
         is_decoder: bool = False,
         bias: bool = True,
+        quantize_act: bool = True,
+        input_bits: int = 8,
+        weight_bits: int = 2,
+        clip_val: float = 2.5,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -130,10 +135,19 @@ class WhisperAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.is_decoder = is_decoder
 
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = QuantizeLinear(embed_dim, embed_dim, bias=False, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
+        self.v_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
+        self.q_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
+        self.out_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
+
+        self.quantize_act = quantize_act
+        if self.quantize_act:
+            self.input_bits = input_bits
+            self.act_quantizaer = SymQuantizer
+            self.register_buffer('clip_query', torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer('clip_key', torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer('clip_value', torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer('clip_attn', torch.Tensor([-clip_val, clip_val]))
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -200,6 +214,11 @@ class WhisperAttention(nn.Module):
         value_states = value_states.reshape(*proj_shape)
 
         src_len = key_states.size(1)
+
+        if self.quantize_act:
+            query_states = self.act_quantizaer.apply(query_states, self.clip_query, self.input_bits, True)
+            key_states = self.act_quantizaer.apply(key_states, self.clip_key, self.input_bits, True)
+
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
@@ -238,6 +257,11 @@ class WhisperAttention(nn.Module):
             attn_weights_reshaped = None
 
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+
+        # quantize both attention probs and value states for dot product
+        if self.quantize_act:
+            attn_probs = self.act_quantizaer.apply(attn_probs, self.clip_attn, self.input_bits, True)
+            value_states = self.act_quantizaer.apply(value_states, self.clip_value, self.input_bits, True)
 
         attn_output = torch.bmm(attn_probs, value_states)
 

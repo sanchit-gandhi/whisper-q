@@ -169,20 +169,20 @@ class TwnQuantizer(torch.autograd.Function):
         return grad_input, None, None, None
 
 class QuantizeLinear(nn.Linear):
-    def __init__(self,  *kargs, bias=True, config = None):
-        super(QuantizeLinear, self).__init__(*kargs,bias=True)
-        self.quantize_act = config.quantize_act
-        self.weight_bits = config.weight_bits
-        self.quantize_act = config.quantize_act
+    def __init__(self,  in_features: int, out_features: int, bias=True, quantize_act: bool = True, input_bits: int = 8, weight_bits: int = 2, clip_val: float = 2.5):
+        super().__init__(in_features, out_features, bias=bias)
+        self.quantize_act = quantize_act
+        self.weight_bits = weight_bits
+        self.quantize_act = quantize_act
         if self.weight_bits == 2:
             self.weight_quantizer = TwnQuantizer
         else:
             self.weight_quantizer = SymQuantizer
-        self.register_buffer("weight_clip_val", torch.tensor([-config.clip_val, config.clip_val]))
+        self.register_buffer("weight_clip_val", torch.tensor([-clip_val, clip_val]))
         if self.quantize_act:
-            self.input_bits = config.input_bits
+            self.input_bits = input_bits
             self.act_quantizer = SymQuantizer
-            self.register_buffer("act_clip_val", torch.tensor([-config.clip_val, config.clip_val]))
+            self.register_buffer("act_clip_val", torch.tensor([-clip_val, clip_val]))
 
     def forward(self, input):
         # quantize weight
@@ -197,9 +197,9 @@ class QuantizeLinear(nn.Linear):
 
 
 class QuantizeEmbedding(nn.Embedding):
-    def __init__(self,  *kargs, padding_idx=None, config = None):
+    def __init__(self,  *kargs, padding_idx=None, config=None):
         print("init quantize emb")
-        super(QuantizeEmbedding, self).__init__(*kargs, padding_idx = padding_idx)
+        super(QuantizeEmbedding, self).__init__(*kargs, padding_idx=padding_idx)
         self.weight_bits = config.weight_bits
         self.layerwise = False
         if self.weight_bits == 2:
