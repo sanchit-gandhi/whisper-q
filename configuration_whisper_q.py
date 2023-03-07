@@ -102,6 +102,13 @@ class WhisperConfig(PretrainedConfig):
         begin_suppress_tokens (`List[int]`, *optional*, defaults to `[220,50256]`):
             A list containing tokens that will be supressed at the beginning of the sampling process. Initialized as
             the token for `" "` (`blank_token_id`) and the `eos_token_id`
+        quantize_act: (`bool`, *optional*, defaults to False):
+            Whether to do quantization or not.
+        input_bits: (`int`, *optional*, defaults to 8):
+            The number of bits to use for quantization.
+        weight_bits: (`int`, *optional*, defaults to 2):
+            The number of bits to use for quantization.
+        clip_val: (`float`, *optional*, defaults to 2.5):
 
     Example:
 
@@ -150,6 +157,10 @@ class WhisperConfig(PretrainedConfig):
         eos_token_id=50256,
         suppress_tokens=None,
         begin_suppress_tokens=(220, 50256),
+        quantize_act=False,
+        input_bits=8,
+        weight_bits=2,
+        clip_val=2.5,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -173,6 +184,12 @@ class WhisperConfig(PretrainedConfig):
         self.scale_embedding = scale_embedding  # scale factor will be sqrt(d_model) if True
         self.max_source_positions = max_source_positions
         self.max_target_positions = max_target_positions
+
+        # quantization
+        self.quantize_act = quantize_act
+        self.input_bits = input_bits
+        self.weight_bits = weight_bits
+        self.clip_val = clip_val
 
         super().__init__(
             pad_token_id=pad_token_id,
