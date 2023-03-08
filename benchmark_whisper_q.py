@@ -1,18 +1,17 @@
 import argparse
+import csv
+import subprocess as sp
+import time
 
+import numpy as np
+import torch
 from datasets import load_dataset
-from transformers import WhisperProcessor
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 from whisper_q import WhisperQConfig, WhisperQForConditionalGeneration
 
-import torch
-from torch.utils.data import DataLoader
-import numpy as np
+from transformers import WhisperProcessor
 
-import time
-from tqdm import tqdm
-import subprocess as sp
-
-import csv
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark a quantized Whisper model.")
@@ -73,7 +72,8 @@ def parse_args():
 
 def get_gpu_memory():
     """Python equivalent of nvidia-smi, modified from https://stackoverflow.com/a/67722676"""
-    output_to_list = lambda x: x.decode("ascii").split("\n")[:-1]
+    def output_to_list(x):
+        return x.decode("ascii").split("\n")[:-1]
     command = "nvidia-smi --query-gpu=memory.used --format=csv"
 
     try:
@@ -96,7 +96,9 @@ def main():
     processor = WhisperProcessor.from_pretrained("openai/whisper-tiny.en")
 
     def preprocess(batch):
-        batch["input_features"] = processor(batch["audio"]["array"], sampling_rate=16000, return_tensors="pt").input_features[0]
+        batch["input_features"] = processor(
+            batch["audio"]["array"], sampling_rate=16000, return_tensors="pt"
+        ).input_features[0]
         return batch
 
     dataset_processed = librispeech.map(preprocess, remove_columns=librispeech.column_names)
@@ -109,7 +111,7 @@ def main():
     )
 
     # dicts to store our results
-    whisper_checkpoints = [checkpoint for checkpoint in args.checkpoints.split(" ")]
+    whisper_checkpoints = list(args.checkpoints.split(" "))
     decoder_layer_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
     runtime_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
     param_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
@@ -145,12 +147,14 @@ def main():
             start = time.time()
             for batch in tqdm(dataloader):
                 input_features = batch["input_features"].to("cuda").half()
-                predicted_ids = model.generate(input_features, max_new_tokens=args.generated_tokens, min_new_tokens=args.generated_tokens)
+                model.generate(
+                    input_features, max_new_tokens=args.generated_tokens, min_new_tokens=args.generated_tokens
+                )
             runtime = time.time() - start
 
             decoder_layer_results[checkpoint].append(int(decoder_layers))
             runtime_results[checkpoint].append(runtime)
-            param_results[checkpoint].append(model.num_parameters() / 10 ** 6)
+            param_results[checkpoint].append(model.num_parameters() / 10**6)
             vram_results[checkpoint].append(get_gpu_memory()[0])
 
             del model
@@ -160,7 +164,10 @@ def main():
     compression_results = {}
     for checkpoint in param_results:
         original_params = param_results[checkpoint][0]
-        compression_results[checkpoint] = [100 * (original_params - compressed_params) / original_params for compressed_params in param_results[checkpoint]]
+        compression_results[checkpoint] = [
+            100 * (original_params - compressed_params) / original_params
+            for compressed_params in param_results[checkpoint]
+        ]
 
     # Save the results
     headers = ["Checkpoint", "Dec layers", "Params / M", "Compression / %", "VRAM / GB", "Runtime / s"]
@@ -172,9 +179,17 @@ def main():
         for key in decoder_layer_results:
             for i in range(len(decoder_layer_results[key])):
                 prefix = key.replace(".en", "").replace("-v2", "") if i == 0 else ""
-                data = [prefix, decoder_layer_results[key][i], round(param_results[key][i], 1), round(compression_results[key][i], 1), round(vram_results[key][i] / 1000, 2), round(runtime_results[key][i], 1)]
+                data = [
+                    prefix,
+                    decoder_layer_results[key][i],
+                    round(param_results[key][i], 1),
+                    round(compression_results[key][i], 1),
+                    round(vram_results[key][i] / 1000, 2),
+                    round(runtime_results[key][i], 1),
+                ]
                 writer.writerow(data)
             writer.writerow([])
+
 
 if __name__ == "__main__":
     main()

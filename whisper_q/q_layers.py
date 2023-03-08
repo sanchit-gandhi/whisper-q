@@ -12,13 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Union, Tuple, Any
+from typing import Any, Tuple, Union
 
 import torch
 import torch.nn as nn
 
+
 class SymQuantizer(torch.autograd.Function):
     """Symmetric linear quantisation"""
+
     @staticmethod
     def forward(ctx: Any, input: torch.Tensor, clip_val: torch.Tensor, num_bits: int, layerwise: bool) -> torch.Tensor:
         ctx.save_for_backward(input, clip_val)
@@ -79,7 +81,7 @@ class TwnQuantizer(torch.autograd.Function):
             mask = (input.abs() > thres).float()
             alpha = (mask * input).abs().sum() / mask.sum()
             result = alpha * pos - alpha * neg
-        else: # row-wise only for embed / weight
+        else:  # row-wise only for embed / weight
             n = input[0].nelement()
             m = input.data.norm(p=1, dim=1).div(n)
             thres = (0.7 * m).view(-1, 1).expand_as(input)
@@ -106,8 +108,18 @@ class TwnQuantizer(torch.autograd.Function):
         grad_input[input.le(clip_val[0])] = 0
         return grad_input, None, None, None
 
+
 class QuantizeLinear(nn.Linear):
-    def __init__(self,  in_features: int, out_features: int, bias: bool = True, quantize_act: bool = True, input_bits: int = 8, weight_bits: int = 2, clip_val: float = 2.5):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        quantize_act: bool = True,
+        input_bits: int = 8,
+        weight_bits: int = 2,
+        clip_val: float = 2.5,
+    ):
         super().__init__(in_features, out_features, bias=bias)
         self.quantize_act = quantize_act
         self.weight_bits = weight_bits
@@ -135,7 +147,9 @@ class QuantizeLinear(nn.Linear):
 
 
 class QuantizeEmbedding(nn.Embedding):
-    def __init__(self,  num_embeddings: int, embedding_dim: int, padding_idx=None, weight_bits: int = 2, clip_val: float = 2.5):
+    def __init__(
+        self, num_embeddings: int, embedding_dim: int, padding_idx=None, weight_bits: int = 2, clip_val: float = 2.5
+    ):
         super().__init__(num_embeddings, embedding_dim, padding_idx=padding_idx)
         self.weight_bits = weight_bits
         self.layerwise = False
@@ -157,17 +171,17 @@ class QuantizeEmbedding(nn.Embedding):
 
 class QuantizeConv(nn.Conv1d):
     def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: Union[int, Tuple[int]],
-            stride: Union[int, Tuple[int]] = 1,
-            padding: Union[str, Union[int, Tuple[int]]] = 0,
-            bias: bool = True,
-            quantize_act: bool = True,
-            input_bits: int = 8,
-            weight_bits: int = 2,
-            clip_val: float = 2.5,
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: Union[int, Tuple[int]],
+        stride: Union[int, Tuple[int]] = 1,
+        padding: Union[str, Union[int, Tuple[int]]] = 0,
+        bias: bool = True,
+        quantize_act: bool = True,
+        input_bits: int = 8,
+        weight_bits: int = 2,
+        clip_val: float = 2.5,
     ):
         super().__init__(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
         self.quantize_act = quantize_act

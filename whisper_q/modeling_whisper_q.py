@@ -14,7 +14,6 @@
 # limitations under the License.
 """ PyTorch Whisper model with quantization."""
 
-
 import math
 import random
 from typing import Optional, Tuple, Union
@@ -33,16 +32,21 @@ from transformers.modeling_outputs import (
     Seq2SeqModelOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
+from transformers.utils import (
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    logging,
+    replace_return_docstrings,
+)
 
-from .q_layers import QuantizeLinear, QuantizeEmbedding, SymQuantizer, QuantizeConv
 from .configuration_whisper_q import WhisperQConfig
+from .q_layers import QuantizeConv, QuantizeEmbedding, QuantizeLinear, SymQuantizer
+
 
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "WhisperQConfig"
 _CHECKPOINT_FOR_DOC = "openai/whisper-tiny"
-
 
 WHISPER_PRETRAINED_MODEL_ARCHIVE_LIST = [
     "openai/whisper-base",
@@ -97,6 +101,7 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
 
     return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
 
+
 # Copied from transformers.models.whisper.modeling_whisper.WhisperPositionalEmbedding
 class WhisperPositionalEmbedding(nn.Embedding):
     def __init__(self, num_positions: int, embedding_dim: int, padding_idx: Optional[int] = None):
@@ -135,19 +140,51 @@ class WhisperQAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.is_decoder = is_decoder
 
-        self.k_proj = QuantizeLinear(embed_dim, embed_dim, bias=False, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
-        self.v_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
-        self.q_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
-        self.out_proj = QuantizeLinear(embed_dim, embed_dim, bias=bias, quantize_act=quantize_act, input_bits=input_bits, weight_bits=weight_bits, clip_val=clip_val)
+        self.k_proj = QuantizeLinear(
+            embed_dim,
+            embed_dim,
+            bias=False,
+            quantize_act=quantize_act,
+            input_bits=input_bits,
+            weight_bits=weight_bits,
+            clip_val=clip_val,
+        )
+        self.v_proj = QuantizeLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            quantize_act=quantize_act,
+            input_bits=input_bits,
+            weight_bits=weight_bits,
+            clip_val=clip_val,
+        )
+        self.q_proj = QuantizeLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            quantize_act=quantize_act,
+            input_bits=input_bits,
+            weight_bits=weight_bits,
+            clip_val=clip_val,
+        )
+        self.out_proj = QuantizeLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            quantize_act=quantize_act,
+            input_bits=input_bits,
+            weight_bits=weight_bits,
+            clip_val=clip_val,
+        )
 
         self.quantize_act = quantize_act
         if self.quantize_act:
             self.input_bits = input_bits
             self.act_quantizer = SymQuantizer
-            self.register_buffer('clip_query', torch.Tensor([-clip_val, clip_val]))
-            self.register_buffer('clip_key', torch.Tensor([-clip_val, clip_val]))
-            self.register_buffer('clip_value', torch.Tensor([-clip_val, clip_val]))
-            self.register_buffer('clip_attn', torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer("clip_query", torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer("clip_key", torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer("clip_value", torch.Tensor([-clip_val, clip_val]))
+            self.register_buffer("clip_attn", torch.Tensor([-clip_val, clip_val]))
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -671,7 +708,7 @@ class WhisperQEncoder(WhisperQPreTrainedModel):
             weight_bits=weight_bits,
             clip_val=clip_val,
         )
-        
+
         self.conv2 = QuantizeConv(
             embed_dim,
             embed_dim,
