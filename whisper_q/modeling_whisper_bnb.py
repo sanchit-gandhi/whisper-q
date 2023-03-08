@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Whisper model."""
+""" PyTorch Whisper model with bitsandbytes quantization."""
 
 
 import math
@@ -34,8 +34,15 @@ from transformers.modeling_outputs import (
     Seq2SeqModelOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
+from transformers.utils import (
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    logging,
+    replace_return_docstrings,
+)
 from transformers import WhisperConfig
+
+import bitsandbytes as bnb
 
 
 logger = logging.get_logger(__name__)
@@ -227,7 +234,7 @@ class WhisperPositionalEmbedding(nn.Embedding):
         return self.weight[past_key_values_length : past_key_values_length + input_ids.shape[-1]]
 
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperAttention
+# Copied from transformers.models.whisper.modeling_whisper.WhisperAttention with nn.Linear->bnb.nn.Linear8bit
 class WhisperAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -253,10 +260,10 @@ class WhisperAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.is_decoder = is_decoder
 
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = bnb.nn.Linear8bit(embed_dim, embed_dim, bias=False)
+        self.v_proj = bnb.nn.Linear8bit(embed_dim, embed_dim, bias=bias)
+        self.q_proj = bnb.nn.Linear8bit(embed_dim, embed_dim, bias=bias)
+        self.out_proj = bnb.nn.Linear8bit(embed_dim, embed_dim, bias=bias)
 
     # Copied from transformers.models.whisper.modeling_whisper.BartAttention._shape with BART->whisper
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
@@ -384,7 +391,7 @@ class WhisperAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value
 
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperEncoderLayer
+# Copied from transformers.models.whisper.modeling_whisper.WhisperEncoderLayer with nn.Linear->bnb.nn.Linear8bit
 class WhisperEncoderLayer(nn.Module):
     def __init__(self, config: WhisperConfig):
         super().__init__()
@@ -398,8 +405,8 @@ class WhisperEncoderLayer(nn.Module):
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
-        self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
-        self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
+        self.fc1 = bnb.nn.Linear8bit(self.embed_dim, config.encoder_ffn_dim)
+        self.fc2 = bnb.nn.Linear8bit(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -453,7 +460,7 @@ class WhisperEncoderLayer(nn.Module):
         return outputs
 
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperDecoderLayer
+# Copied from transformers.models.whisper.modeling_whisper.WhisperDecoderLayer with nn.Linear->bnb.nn.Linear8bit
 class WhisperDecoderLayer(nn.Module):
     def __init__(self, config: WhisperConfig):
         super().__init__()
@@ -477,8 +484,8 @@ class WhisperDecoderLayer(nn.Module):
             is_decoder=True,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
-        self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
+        self.fc1 = bnb.nn.Linear8bit(self.embed_dim, config.decoder_ffn_dim)
+        self.fc2 = bnb.nn.Linear8bit(config.decoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -571,7 +578,7 @@ class WhisperDecoderLayer(nn.Module):
         return outputs
 
 
-# Copied from transformers.models.whisper.modeling_whisper.WhisperPreTrainedModel
+# Copied from transformers.models.whisper.modeling_whisper.WhisperPreTrainedModel with nn.Linear->bnb.nn.Linear8bit
 class WhisperPreTrainedModel(PreTrainedModel):
     config_class = WhisperConfig
     base_model_prefix = "model"
@@ -581,7 +588,7 @@ class WhisperPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         std = self.config.init_std
-        if isinstance(module, (nn.Linear, nn.Conv1d)):
+        if isinstance(module, (bnb.nn.Linear8bit, nn.Conv1d)):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
                 module.bias.data.zero_()
@@ -754,6 +761,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         self.max_source_positions = config.max_source_positions
         self.embed_scale = math.sqrt(embed_dim) if config.scale_embedding else 1.0
 
+        # TODO(SG): convert conv layers to bnb
         self.conv1 = nn.Conv1d(self.num_mel_bins, embed_dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1)
 
@@ -1301,8 +1309,8 @@ class WhisperModel(WhisperPreTrainedModel):
     "The Whisper Model with a language modeling head. Can be used for automatic speech recognition.",
     WHISPER_START_DOCSTRING,
 )
-# Copied from transformers.models.whisper.modeling_whisper.WhisperForConditionalGeneration
-class WhisperForConditionalGeneration(WhisperPreTrainedModel):
+# Copied from transformers.models.whisper.modeling_whisper.WhisperForConditionalGeneration with nn.Linear->bnb.nn.Linear8bit
+class WhisperBnbForConditionalGeneration(WhisperPreTrainedModel):
     base_model_prefix = "model"
     _keys_to_ignore_on_load_missing = [
         r"encoder.version",
@@ -1316,7 +1324,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
     def __init__(self, config: WhisperConfig):
         super().__init__(config)
         self.model = WhisperModel(config)
-        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.proj_out = bnb.nn.Linear8bit(config.d_model, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
