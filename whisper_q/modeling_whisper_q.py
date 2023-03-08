@@ -143,7 +143,7 @@ class WhisperQAttention(nn.Module):
         self.quantize_act = quantize_act
         if self.quantize_act:
             self.input_bits = input_bits
-            self.act_quantizaer = SymQuantizer
+            self.act_quantizer = SymQuantizer
             self.register_buffer('clip_query', torch.Tensor([-clip_val, clip_val]))
             self.register_buffer('clip_key', torch.Tensor([-clip_val, clip_val]))
             self.register_buffer('clip_value', torch.Tensor([-clip_val, clip_val]))
@@ -216,8 +216,8 @@ class WhisperQAttention(nn.Module):
         src_len = key_states.size(1)
 
         if self.quantize_act:
-            query_states = self.act_quantizaer.apply(query_states, self.clip_query, self.input_bits, True)
-            key_states = self.act_quantizaer.apply(key_states, self.clip_key, self.input_bits, True)
+            query_states = self.act_quantizer.apply(query_states, self.clip_query, self.input_bits, True)
+            key_states = self.act_quantizer.apply(key_states, self.clip_key, self.input_bits, True)
 
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
@@ -260,8 +260,8 @@ class WhisperQAttention(nn.Module):
 
         # quantize both attention probs and value states for dot product
         if self.quantize_act:
-            attn_probs = self.act_quantizaer.apply(attn_probs, self.clip_attn, self.input_bits, True)
-            value_states = self.act_quantizaer.apply(value_states, self.clip_value, self.input_bits, True)
+            attn_probs = self.act_quantizer.apply(attn_probs, self.clip_attn, self.input_bits, True)
+            value_states = self.act_quantizer.apply(value_states, self.clip_value, self.input_bits, True)
 
         attn_output = torch.bmm(attn_probs, value_states)
 
