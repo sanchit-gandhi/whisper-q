@@ -140,11 +140,11 @@ def main():
             print("Layers: ", decoder_layers)
             config.decoder_layers = int(decoder_layers)
             model = WhisperQForConditionalGeneration(config)
-            model.to("cuda")
+            model.to("cuda").half()
 
             start = time.time()
             for batch in tqdm(dataloader):
-                input_features = batch["input_features"].to("cuda")
+                input_features = batch["input_features"].to("cuda").half()
                 predicted_ids = model.generate(input_features, max_new_tokens=args.generated_tokens, min_new_tokens=args.generated_tokens)
             runtime = time.time() - start
 
