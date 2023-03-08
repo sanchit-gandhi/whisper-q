@@ -245,6 +245,7 @@ class QuantizeConv(nn.Conv1d):
             self.input_bits = input_bits
             self.act_quantizer = SymQuantizer
             self.register_buffer("act_clip_val", torch.tensor([-clip_val, clip_val]))
+
     def forward(self, input):
         # quantize weight
         weight = self.weight_quantizer.apply(self.weight, self.weight_clip_val, self.weight_bits, True)

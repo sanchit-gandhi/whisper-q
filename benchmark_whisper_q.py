@@ -49,14 +49,14 @@ def parse_args():
     )
     parser.add_argument(
         "--weight_bits",
-        default=8,
+        default=2,
         type=int,
         choices=[2, 8, 16],
         help="Quantization bits for weights.",
     )
     parser.add_argument(
         "--input_bits",
-        default=8,
+        default=2,
         type=int,
         help="Quantization bits for activations.",
     )
@@ -109,7 +109,7 @@ def main():
     )
 
     # dicts to store our results
-    whisper_checkpoints = args.checkpoints
+    whisper_checkpoints = [checkpoint for checkpoint in args.checkpoints.split(" ")]
     decoder_layer_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
     runtime_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
     param_results = {checkpoint: [] for checkpoint in whisper_checkpoints}
@@ -141,11 +141,11 @@ def main():
             config.decoder_layers = int(decoder_layers)
             model = WhisperQForConditionalGeneration(config)
             model.to("cuda")
-            model.half()
 
             start = time.time()
             for batch in tqdm(dataloader):
-                predicted_ids = model.generate(batch["input_features"].to("cuda").half(), max_new_tokens=args.generated_tokens, min_new_tokens=args.generated_tokens)
+                input_features = batch["input_features"].to("cuda")
+                predicted_ids = model.generate(input_features, max_new_tokens=args.generated_tokens, min_new_tokens=args.generated_tokens)
             runtime = time.time() - start
 
             decoder_layer_results[checkpoint].append(int(decoder_layers))
