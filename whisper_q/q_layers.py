@@ -252,7 +252,6 @@ class QuantizeConv(nn.Conv1d):
         input = self.act_quantizer.apply(input, self.act_clip_val, self.input_bits, True)
         out = nn.functional.conv1d(input, weight, stride=self.stride, padding=self.padding)
         if self.bias is not None:
-            # TODO(SG): check bias shape is compatible here
-            out += self.bias.view(1, -1).expand_as(out)
+            out += self.bias.view(1, -1, 1).expand_as(out)
 
         return out

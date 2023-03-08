@@ -673,7 +673,7 @@ class WhisperQEncoder(WhisperQPreTrainedModel):
         )
         
         self.conv2 = QuantizeConv(
-            self.num_mel_bins,
+            embed_dim,
             embed_dim,
             kernel_size=3,
             stride=2,
