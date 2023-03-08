@@ -1,1 +1,1 @@
-# whisper-q
+# Whisper Q
