@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing import Union, Tuple
 
 import torch
 import torch.nn as nn
@@ -169,7 +170,7 @@ class TwnQuantizer(torch.autograd.Function):
         return grad_input, None, None, None
 
 class QuantizeLinear(nn.Linear):
-    def __init__(self,  in_features: int, out_features: int, bias=True, quantize_act: bool = True, input_bits: int = 8, weight_bits: int = 2, clip_val: float = 2.5):
+    def __init__(self,  in_features: int, out_features: int, bias: bool = True, quantize_act: bool = True, input_bits: int = 8, weight_bits: int = 2, clip_val: float = 2.5):
         super().__init__(in_features, out_features, bias=bias)
         self.quantize_act = quantize_act
         self.weight_bits = weight_bits
@@ -190,28 +191,68 @@ class QuantizeLinear(nn.Linear):
         # quantize input
         input = self.act_quantizer.apply(input, self.act_clip_val, self.input_bits, True)
         out = nn.functional.linear(input, weight)
-        if not self.bias is None:
+        if self.bias is not None:
             out += self.bias.view(1, -1).expand_as(out)
 
         return out
 
 
 class QuantizeEmbedding(nn.Embedding):
-    def __init__(self,  *kargs, padding_idx=None, config=None):
-        print("init quantize emb")
-        super(QuantizeEmbedding, self).__init__(*kargs, padding_idx=padding_idx)
-        self.weight_bits = config.weight_bits
+    def __init__(self,  num_embeddings: int, embedding_dim: int, padding_idx=None, weight_bits: int = 2, clip_val: float = 2.5):
+        super().__init__(num_embeddings, embedding_dim, padding_idx=padding_idx)
+        self.weight_bits = weight_bits
         self.layerwise = False
+
         if self.weight_bits == 2:
             self.weight_quantizer = TwnQuantizer
         else:
             self.weight_quantizer = SymQuantizer
 
-        self.register_buffer("weight_clip_val", torch.tensor([-config.clip_val, config.clip_val]))
+        self.register_buffer("weight_clip_val", torch.tensor([-clip_val, clip_val]))
 
     def forward(self, input):
         weight = self.weight_quantizer.apply(self.weight, self.weight_clip_val, self.weight_bits,self.layerwise)
         out = nn.functional.embedding(
             input, weight, self.padding_idx, self.max_norm,
             self.norm_type, self.scale_grad_by_freq, self.sparse)
+        return out
+
+
+class QuantizeConv(nn.Conv1d):
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            kernel_size: Union[int, Tuple[int]],
+            stride: Union[int, Tuple[int]] = 1,
+            padding: Union[str, Union[int, Tuple[int]]] = 0,
+            bias: bool = True,
+            quantize_act: bool = True,
+            input_bits: int = 8,
+            weight_bits: int = 2,
+            clip_val: float = 2.5,
+    ):
+        super().__init__(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
+        self.quantize_act = quantize_act
+        self.weight_bits = weight_bits
+        self.quantize_act = quantize_act
+        if self.weight_bits == 2:
+            self.weight_quantizer = TwnQuantizer
+        else:
+            self.weight_quantizer = SymQuantizer
+        self.register_buffer("weight_clip_val", torch.tensor([-clip_val, clip_val]))
+        if self.quantize_act:
+            self.input_bits = input_bits
+            self.act_quantizer = SymQuantizer
+            self.register_buffer("act_clip_val", torch.tensor([-clip_val, clip_val]))
+    def forward(self, input):
+        # quantize weight
+        weight = self.weight_quantizer.apply(self.weight, self.weight_clip_val, self.weight_bits, True)
+        # quantize input
+        input = self.act_quantizer.apply(input, self.act_clip_val, self.input_bits, True)
+        out = nn.functional.conv1d(input, weight, stride=self.stride, padding=self.padding)
+        if self.bias is not None:
+            # TODO(SG): check bias shape is compatible here
+            out += self.bias.view(1, -1).expand_as(out)
+
         return out
