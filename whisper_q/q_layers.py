@@ -12,24 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Union, Tuple
+from typing import Union, Tuple, Any
 
 import torch
 import torch.nn as nn
 
 class SymQuantizer(torch.autograd.Function):
-    """
-        uniform quantization
-    """
+    """Symmetric linear quantisation"""
     @staticmethod
-    def forward(ctx, input, clip_val, num_bits, layerwise):
-        """
-        :param ctx:
-        :param input: tensor to be quantized
-        :param clip_val: clip the tensor before quantization
-        :param quant_bits: number of bits
-        :return: quantized tensor
-        """
+    def forward(ctx: Any, input: torch.Tensor, clip_val: torch.Tensor, num_bits: int, layerwise: bool) -> torch.Tensor:
         ctx.save_for_backward(input, clip_val)
         input = torch.clamp(input, clip_val[0], clip_val[1])
 
@@ -45,7 +36,10 @@ class SymQuantizer(torch.autograd.Function):
                 tmp = input.view(input.shape[0], input.shape[1], -1)
                 max_input = torch.max(torch.abs(tmp), dim=-1, keepdim=True)[0].unsqueeze(-1).expand_as(input).detach()
             else:
-                raise ValueError
+                raise ValueError(
+                    f"Unsupported tensor size for quantization. Expected <4 dimensions, got {input.ndimension()}."
+                )
+
         s = (2 ** (num_bits - 1) - 1) / max_input
         output = torch.round(input * s).div(s)
 
@@ -54,68 +48,13 @@ class SymQuantizer(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         """
-        :param ctx: saved non-clipped full-precision tensor and clip_val
-        :param grad_output: gradient ert the quantized tensor
-        :return: estimated gradient wrt the full-precision tensor
+        Args:
+            ctx: saved non-clipped full-precision tensor and clip_val
+            grad_output: gradient wrt the quantized tensor
+        Returns:
+            grad_input: estimated gradient wrt the full-precision tensor
         """
-        input, clip_val = ctx.saved_tensors  # unclipped input
-        grad_input = grad_output.clone()
-        grad_input[input.ge(clip_val[1])] = 0
-        grad_input[input.le(clip_val[0])] = 0
-        return grad_input, None, None, None
-
-
-class AsymQuantizer(torch.autograd.Function):
-    """
-        min-max quantization
-    """
-    @staticmethod
-    def forward(ctx, input, clip_val, num_bits, layerwise):
-        """
-        :param ctx:
-        :param input: tensor to be quantized
-        :param clip_val: clip the tensor before quantization
-        :param quant_bits: number of bits
-        :return: quantized tensor
-        """
-        ctx.save_for_backward(input, clip_val)
-
-        input = torch.where(input < clip_val[1], input, clip_val[1])
-        input = torch.where(input > clip_val[0], input, clip_val[0])
-        # input = torch.clamp(input, clip_val[0], clip_val[1])
-        # NOTE: dynamic scaling gives better performance than static
-        if layerwise:
-            alpha = (input.max() - input.min()).detach()
-            beta = input.min().detach()
-        else:
-            if input.ndimension() <= 3:
-                # weight & hidden layer
-                alpha = (input.max(dim=-1, keepdim=True)[0] - input.min(dim=-1, keepdim=True)[0]).expand_as(input).detach()
-                beta = input.min(dim=-1, keepdim=True)[0].expand_as(input).detach()
-            elif input.ndimension() == 4:
-                # TODO: attention score matrix, calculate alpha / beta per head
-                tmp = input.view(input.shape[0], input.shape[1], -1)
-                alpha = (tmp.max(dim=-1, keepdim=True)[0].unsqueeze(-1) - \
-                            tmp.min(dim=-1, keepdim=True)[0].unsqueeze(-1)).expand_as(input).detach()
-                beta = tmp.min(dim=-1, keepdim=True)[0].unsqueeze(-1).expand_as(input).detach()
-            else:
-                raise ValueError
-        input_normalized = (input - beta) / (alpha + 1e-8)
-        s = (2**num_bits - 1)
-        quant_input = torch.round(input_normalized * s).div(s)
-        output = quant_input * (alpha + 1e-8) + beta
-
-
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """
-        :param ctx: saved non-clipped full-precision tensor and clip_val
-        :param grad_output: gradient ert the quantized tensor
-        :return: estimated gradient wrt the full-precision tensor
-        """
-        input, clip_val = ctx.saved_tensors  # unclipped input
+        input, clip_val = ctx.saved_tensors  # un-clipped input
         grad_input = grad_output.clone()
         grad_input[input.ge(clip_val[1])] = 0
         grad_input[input.le(clip_val[0])] = 0
@@ -123,19 +62,15 @@ class AsymQuantizer(torch.autograd.Function):
 
 
 class TwnQuantizer(torch.autograd.Function):
-    """Ternary Weight Networks (TWN)
-    Ref: https://arxiv.org/abs/1605.04711
-    """
+    """Ternary Weight Networks (TWN). Ref: https://arxiv.org/abs/1605.04711"""
 
     @staticmethod
-    def forward(ctx, input, clip_val, num_bits, layerwise):
-        """
-        :param input: tensor to be ternarized
-        :return: quantized tensor
-        """
+    def forward(ctx: Any, input: torch.Tensor, clip_val: torch.Tensor, num_bits: int, layerwise: bool):
         ctx.save_for_backward(input, clip_val)
+
         input = torch.where(input < clip_val[1], input, clip_val[1])
         input = torch.where(input > clip_val[0], input, clip_val[0])
+
         if layerwise:
             m = input.norm(p=1).div(input.nelement())
             thres = 0.7 * m
@@ -159,11 +94,13 @@ class TwnQuantizer(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         """
-        :param ctx: saved non-clipped full-precision tensor and clip_val
-        :param grad_output: gradient ert the quantized tensor
-        :return: estimated gradient wrt the full-precision tensor
+        Args:
+            ctx: saved non-clipped full-precision tensor and clip_val
+            grad_output: gradient wrt the quantized tensor
+        Returns:
+            grad_input: estimated gradient wrt the full-precision tensor
         """
-        input, clip_val = ctx.saved_tensors  # unclipped input
+        input, clip_val = ctx.saved_tensors  # un-clipped input
         grad_input = grad_output.clone()
         grad_input[input.ge(clip_val[1])] = 0
         grad_input[input.le(clip_val[0])] = 0
